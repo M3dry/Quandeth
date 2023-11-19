@@ -14,7 +14,12 @@ public:
     Rectangle viewport;
     Dungeon dungeon;
     Player player;
+    bool map_open;
+    Rectangle map_rec;
     Camera2D camera;
+    Camera2D map_cam;
+    RenderTexture camera_r;
+    RenderTexture map_cam_r;
 
     Game(Dungeon dungeon);
     void process();

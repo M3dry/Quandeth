@@ -21,9 +21,8 @@
 
 
 CC=g++
-CFLAGS=-g -Wall
-LDFLAGS=-lm -lraylib
-CLIBS=
+CFLAGS=-g -Wall -std=c++23 -L ./lib/ -I ./raylib/src/
+LDFLAGS=-lm -lraylib -std=c++23 -L ./lib/ -I ./raylib/src/
 OBJ=obj
 SRC=src
 SRCS=$(wildcard $(SRC)/*.cpp)
@@ -34,7 +33,7 @@ BIN=quandeth
 all: $(BIN)
 
 $(BIN): $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(CLIBS) $(OBJS) -o $(BINDIR)/$@
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $(BINDIR)/$@
 
 $(OBJ)/%.o: $(SRC)/%.cpp
 	$(CC) $(CFLAGS) -c $< -o $@

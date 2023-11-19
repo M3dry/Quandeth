@@ -1,12 +1,16 @@
-let
-  nixpkgs = import <nixpkgs> {};
-  pkgs = nixpkgs.pkgsCross.mingwW64;
-in
+{ pkgs ? import <nixpkgs> {} }:
+pkgs.mkShell {
 
-# callPackage is needed due to https://github.com/NixOS/nixpkgs/pull/126844
-pkgs.pkgsStatic.callPackage ({ mkShell, zlib, pkg-config, file }: mkShell {
-  # these tools run on the build platform, but are configured to target the host platform
-  nativeBuildInputs = [ pkg-config file ];
-  # libraries needed for the host platform
-  buildInputs = [ zlib ];
-}) {}
+  nativeBuildInputs = with pkgs; [
+    # this is an extremely hacky way to compile raylib with custom frame control. Just adding the SUPPORT_CUSTOM_FRAME_CONTROL flag wouldn't work as the nix package uses older (stable or whatever) branch of raylib
+    (raylib.overrideAttrs (oldAttrs: rec {
+      src = builtins.fetchTarball {
+        url = "https://github.com/raysan5/raylib/archive/master.tar.gz";
+      };
+      patches = [];
+      cmakeFlags = [ "-DUSE_EXTERNAL_GLFW=ON" "-DBUILD_EXAMPLES=OFF" "-DCUSTOMIZE_BUILD=ON" "-DSUPPORT_CUSTOM_FRAME_CONTROL=ON" "-DINCLUDE_EVERYTHING=ON" "-DBUILD_SHARED_LIBS=ON" ];
+    }))
+    gdb
+    gcc13
+  ];
+}

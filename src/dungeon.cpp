@@ -1,15 +1,47 @@
 #include <raylib.h>
+#include <utility>
 #include <vector>
 #include <tuple>
 #include <stdio.h>
 
 #include "dungeon.hpp"
 #include "graph.hpp"
+#include "util.hpp"
 
-Dungeon::Dungeon(Vector2 spawn, vector<graph::Node<Room>> rooms, std::size_t spawn_room, vector<const char *> texture_paths = {},
-                 Color room_floor = GetColor(0x292d3eff), Color hallway_floor = GetColor(0x292d3eff), Color border = WHITE) :
+static bool recs_sort(const Rectangle& main, const Rectangle& rec1, const Rectangle& rec2) {
+    int dir1 = 0;
+    int dir2 = 0;
+
+    if (main.y == (rec1.y + rec1.height)) dir1 = 0;
+    else if (main.x == (rec1.x + rec1.width)) dir1 = 3;
+    else if ((main.y + main.height) == rec1.y) dir1 = 2;
+    else dir1 = 1;
+
+    if (main.y == (rec2.y + rec2.height)) dir2 = 0;
+    else if (main.x == (rec2.x + rec2.width)) dir2 = 3;
+    else if ((main.y + main.height) == rec2.y) dir2 = 2;
+    else dir2 = 1;
+
+    if (dir1 == dir2) {
+        switch (dir1) {
+        case 0:
+            return rec1.x < rec2.x;
+        case 1:
+            return rec1.y < rec2.y;
+        case 2:
+            return rec1.y < rec2.y;
+        case 3:
+            return rec1.x < rec2.x;
+        default:
+            std::unreachable();
+        }
+    } else return dir1 < dir2;
+}
+
+Dungeon::Dungeon(Vector2 spawn, vector<graph::Node<Room>> rooms, std::size_t spawn_room, vector<const char *> texture_paths,
+                 Color room_floor, Color hallway_floor, Color border) :
             spawn((Vector2){ rooms[spawn_room].value.rectangle.x + spawn.x, rooms[spawn_room].value.rectangle.y + spawn.y }),
-            current_room(spawn_room), rooms(rooms, spawn_room),
+            rooms(rooms, spawn_room),
             room_floor(room_floor), hallway_floor(hallway_floor), border(border) {
     textures.reserve(texture_paths.size());
     for (std::size_t i = 0; i < texture_paths.size(); i++) {
@@ -17,66 +49,50 @@ Dungeon::Dungeon(Vector2 spawn, vector<graph::Node<Room>> rooms, std::size_t spa
     }
 };
 
-void Dungeon::draw() {
+void Dungeon::draw(bool borders, float scale) {
+    if (borders) {
+        rooms.walk([this, &scale](auto node, const auto& nodes) -> int {
+            auto rec = util::scale_rec(nodes[node].value.rectangle, scale);
+            auto b_scale = 5*scale;
+
+            DrawRectangle(rec.x - b_scale, rec.y - b_scale, rec.width + 2*b_scale, rec.height + 2*b_scale, border);
+
+            return 0;
+        });
+    }
+
     rooms.walk([&](auto node, const auto& nodes) -> int {
-        switch (nodes[node].value.type) {
-        case Room::TRoom:
-            DrawRectangleRec(nodes[node].value.rectangle, room_floor);
-            break;
-        case Room::THallway:
-            DrawRectangleRec(nodes[node].value.rectangle, hallway_floor);
-            break;
-        }
+        auto color = nodes[node].value.type == Room::TRoom ? room_floor : hallway_floor;
+        auto rec = nodes[node].value.rectangle;
+
+        DrawRectangleRec(util::scale_rec(rec, scale), color);
 
         for (const auto& [v, i] : nodes[node].value.obstacles) {
-            DrawTextureV(textures[i], v, WHITE);
+            auto inside = util::inside(util::scale_rec(nodes[node].value.rectangle, scale), { v.x, v.y, textures[i].width*scale, textures[i].height*scale });
+            if (inside) {
+                auto ins = *inside;
+                DrawTextureRec(textures[i], (Rectangle){ 0, 0, ins.width, ins.height }, (Vector2){ ins.x, ins.y }, WHITE);
+            }
         }
 
         return 0;
     });
 }
 
-static bool CheckCollisionPointPoly(Vector2 point, Vector2 *points, int pointCount) {
-    bool collision = false;
-
-    if (pointCount > 2)
-    {
-        for (int i = 0; i < pointCount - 1; i++)
-        {
-            Vector2 vc = points[i];
-            Vector2 vn = points[i + 1];
-
-            if ((((vc.y >= point.y) && (vn.y < point.y)) || ((vc.y < point.y) && (vn.y >= point.y))) &&
-                 (point.x < ((vn.x - vc.x)*(point.y - vc.y)/(vn.y - vc.y) + vc.x))) collision = !collision;
-        }
-    }
-
-    return collision;
-}
-
-static vector<Vector2> get_verts(const Rectangle& rec) {
-    vector<Vector2> vec = {
-        { rec.x, rec.y },
-        { rec.x + rec.width, rec.y },
-        { rec.x + rec.width, rec.y + rec.height },
-        { rec.x, rec.y + rec.height }
-    };
-    return vec;
-}
-
-bool Dungeon::check_collisions(Rectangle rec) {
+bool Dungeon::check_collisions(Rectangle rec, std::size_t& room) {
     bool ok = false;
 
     rooms.walk([&](auto node, const auto& nodes) -> int {
         Rectangle main = nodes[node].value.rectangle;
 
         vector<Rectangle> recs;
+        recs.reserve(nodes[node].points_to.size());
         for (const auto& i : nodes[node].points_to) {
             const auto& recc = nodes[i].value.rectangle;
 
             if (CheckCollisionRecs(rec, { recc.x + rec.width, recc.y + rec.height, recc.width - rec.width*2, recc.height - rec.height*2 })) {
                 ok = true;
-                current_room = i;
+                room = i;
                 return 1;
             }
 
@@ -84,23 +100,10 @@ bool Dungeon::check_collisions(Rectangle rec) {
         }
 
         std::sort(recs.begin(), recs.end(), [&main](auto& rec1, auto& rec2) -> bool {
-            int dir1 = 0;
-            int dir2 = 0;
-
-            if (main.y == (rec1.y + rec1.height)) dir1 = 0;
-            else if (main.x == (rec1.x + rec1.width)) dir1 = 3;
-            else if ((main.y + main.height) == rec1.y) dir1 = 2;
-            else dir1 = 1;
-
-            if (main.y == (rec2.y + rec2.height)) dir2 = 0;
-            else if (main.x == (rec2.x + rec2.width)) dir2 = 3;
-            else if ((main.y + main.height) == rec2.y) dir2 = 2;
-            else dir2 = 1;
-
-            return dir1 <= dir2;
+            return recs_sort(main, rec1, rec2);
         });
 
-        auto main_verts = get_verts(main);
+        auto main_verts = util::get_verts(main);
         main_verts.push_back({ main.x, main.y });
         std::reverse(main_verts.begin(), main_verts.end());
 
@@ -111,7 +114,7 @@ bool Dungeon::check_collisions(Rectangle rec) {
         int side = 0;
         std::size_t i = 0;
         while (i < recs.size()) {
-            auto vs = get_verts(recs[i]);
+            auto vs = util::get_verts(recs[i]);
 
             switch (side) {
             case 0:
@@ -119,6 +122,7 @@ bool Dungeon::check_collisions(Rectangle rec) {
                     std::rotate(vs.begin(), vs.begin()+3, vs.end());
                     verts.insert(verts.end(), vs.begin(), vs.end());
                     i++;
+                    break;
                 }
 
                 verts.push_back(main_verts.back());
@@ -129,6 +133,7 @@ bool Dungeon::check_collisions(Rectangle rec) {
                 if ((main.x + main.width) == vs[0].x) {
                     verts.insert(verts.end(), vs.begin(), vs.end());
                     i++;
+                    break;
                 }
 
                 verts.push_back(main_verts.back());
@@ -152,6 +157,7 @@ bool Dungeon::check_collisions(Rectangle rec) {
                     std::rotate(vs.begin(), vs.begin()+2, vs.end());
                     verts.insert(verts.end(), vs.begin(), vs.end());
                     i++;
+                    break;
                 }
                 verts.push_back(main_verts.back());
                 main_verts.pop_back();
@@ -164,14 +170,8 @@ bool Dungeon::check_collisions(Rectangle rec) {
         std::reverse(main_verts.begin(), main_verts.end());
         verts.insert(verts.end(), main_verts.begin(), main_verts.end());
 
-        // printf("VERTS:\n");
-        // for (std::size_t o = 0; o < verts.size(); o++) {
-        //     printf("%ld: %f %f\n", o, verts[o].x, verts[o].y);
-        // }
-        // printf("\n");
-
         bool pos_bad = false;
-        for (const auto& pos : get_verts(rec)) {
+        for (const auto& pos : util::get_verts(rec)) {
             if (!CheckCollisionPointPoly(pos, &verts[0], verts.size())) {
                 pos_bad = true;
                 break;
@@ -181,7 +181,7 @@ bool Dungeon::check_collisions(Rectangle rec) {
         if (!pos_bad) ok = true;
 
         return 1;
-    }, current_room);
+    }, room);
 
     return !ok;
 }
